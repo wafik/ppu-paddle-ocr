@@ -59,6 +59,19 @@ export class BaseDetectionService {
     this.options = { ...DEFAULT_DETECTION_OPTIONS, ...options };
     this.debugging = { ...DEFAULT_DEBUGGING_OPTIONS, ...debugging };
 
+    // Both engines apply the threshold as a strict cut (`src > thresh`), so the
+    // value has to be a probability that 8-bit quantisation can represent. At
+    // `1` or above neither engine finds foreground, and run() returns zero boxes
+    // without an error; below `0` the OpenCV path's `> 0` guard silently ignores
+    // the option, while the canvas-native path's cut goes negative so every
+    // pixel passes and the whole map collapses into one region.
+    const detectionThreshold = this.options.detectionThreshold ?? 0;
+    if (!(detectionThreshold >= 0 && detectionThreshold < 1)) {
+      throw new Error(
+        `detectionThreshold must be a probability in [0, 1), received ${detectionThreshold}`
+      );
+    }
+
     if (engine === "opencv" && !this.platform.imageProcessor) {
       this.engine = "canvas-native";
     } else {
@@ -298,8 +311,14 @@ export class BaseDetectionService {
       // the same map cut at 0 are the same foreground. See `detectionThreshold`.
       const detectionThreshold = this.options.detectionThreshold ?? 0;
       if (detectionThreshold > 0) {
+        // Rounded to the same 8-bit level the canvas-native path uses, and both
+        // engines then compare with a strict `>` (cv.threshold's THRESH_BINARY
+        // is `src > thresh ? maxval : 0`), so one probability lands on exactly
+        // the same foreground cut on either engine. Passing the unrounded
+        // product would leave OpenCV one grey level more permissive at values
+        // whose 8-bit product is fractional, 0.3 among them.
         processor.threshold({
-          lower: detectionThreshold * 255,
+          lower: Math.round(detectionThreshold * 255),
           upper: 255,
           type: ip.cv.THRESH_BINARY,
         });

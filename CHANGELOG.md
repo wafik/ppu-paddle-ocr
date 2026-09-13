@@ -30,12 +30,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `detection.detectionThreshold` - binarizes the detector's probability map
   before text regions are extracted, which the detection path previously never
   did. Without it the map goes to `findContours` unmodified, and since that
-  treats any non-zero pixel as foreground the effective cut is around 0.002
-  rather than the 0.3 PaddleOCR and arboOCR use, so weak probability tails can
-  bridge neighbouring lines into single loose boxes. Setting `0.3` measured
-  +1.46 points of character accuracy on the 40-stem SROIE2019 sample (83.51% ->
-  84.97%) for roughly 11% more engine time. Off by default (`0` keeps today's
-  behavior), and applies to both the OpenCV and canvas-native engines.
+  treats any non-zero pixel as foreground the effective cut sits around 0.002
+  rather than at a level the caller picks. Setting `0.3` measured +1.46 points
+  of character accuracy on the 40-stem SROIE2019 sample (83.51% -> 84.97%) for
+  roughly 11% more engine time. Read that as that corpus' result, not a general
+  gain: the option changes which boxes are detected, not how well they are read,
+  and SROIE's tight ground-truth boxes reward ppu's box shrinking on their own.
+  The default preset measured worse on `assets/receipt.jpg` (99.48% to 96.87%
+  per-line). The extra time is not the cut, which costs 0.42 ms per image, but
+  the crops: the cut shortens a box far more than it narrows it, raising the
+  mean aspect ratio from 4.76 to 5.82, and recognition rescales to a fixed
+  height, so wider crops are wider tensors. It is not PaddleOCR parity either -
+  PaddleOCR pairs its 0.3 cut with a 0.6 box score and an unclip ratio of 1.5,
+  and ppu has no unclip step. Off by default (`0` keeps today's behavior),
+  applies to both the OpenCV and canvas-native engines, and rejects values
+  outside `[0, 1)`.
 
 ### Fixed
 

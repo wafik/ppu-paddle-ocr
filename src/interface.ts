@@ -126,22 +126,52 @@ export type DetectionOptions = {
 
   /**
    * Binarization threshold applied to the detector's probability map before
-   * text regions are extracted, as a probability in `(0, 1)`.
+   * text regions are extracted, as a probability in `[0, 1)`. Must be below
+   * `1`; values outside the range are rejected.
    *
    * `0` (the default) leaves the map's pixels as they are, which is also what
    * an OpenCV threshold of `0` means: `findContours` treats any non-zero pixel
-   * as foreground, so the effective cut is `round(p * 255) > 0` — around
-   * 0.002. That is far below the 0.3 PaddleOCR and arboOCR use, and it lets
-   * weak probability tails bridge neighbouring lines into single, loose boxes.
+   * as foreground, so the effective cut is `round(p * 255) > 0`, about 0.002.
+   * Nothing below that is expressible in 8 bits, so `0` is the permissive end
+   * of the range rather than an absence of thresholding.
    *
-   * Measured on the 40-stem SROIE2019 sample, `0.3` reads +1.46 points of
-   * character accuracy (83.51% -> 84.97%) for roughly 11% more engine time:
-   * fewer boxes come out, but each one is tighter around its text. Values
-   * above 0.5 measured no further gain.
+   * Raising it changes which regions are detected. Only pixels above the cut
+   * survive, so fewer boxes come out and each one sits tighter around its
+   * text. On the 40-stem SROIE2019 sample (PP-OCRv6 small, per-box) `0.3`
+   * measured 83.51% -> 84.97% character accuracy against box ground truth for
+   * roughly 11% more engine time, with the baseline run both before and after
+   * the thresholded arm so that session drift is separable from the effect.
    *
-   * Set `0.3` for PaddleOCR parity, or higher on clean, high-contrast input
-   * where the extra boxes are noise. Applies to both the OpenCV and the
-   * canvas-native detection path.
+   * Treat that as one corpus' result, not a general accuracy win, and not as a
+   * PaddleOCR-parity switch:
+   *
+   * - It came from one model and one recognition strategy. The option does not
+   *   improve recognition, it only changes which boxes reach it, so the same
+   *   cut can read lower on another configuration or another image. The
+   *   default configuration did read lower on `assets/receipt.jpg`: the
+   *   default PP-OCRv6 tiny model fell from 99.48% to 96.87% per-line and from
+   *   99.74% to 99.22% per-box.
+   * - SROIE's ground-truth boxes are tight, and ppu pads its boxes
+   *   deliberately. Any change that shrinks them scores better against that
+   *   ground truth, so part of the gain is box geometry rather than better
+   *   text.
+   * - PaddleOCR pairs its 0.3 cut with `det_db_box_thresh=0.6` and
+   *   `det_db_unclip_ratio=1.5`: DB trains on shrunk text polygons, so the
+   *   region above 0.3 lies inside the text and unclip grows it back to the
+   *   full extent. ppu has no unclip step and pads instead, so a 0.3 cut here
+   *   yields smaller boxes than PaddleOCR's 0.3 does.
+   * - The extra engine time is not the cut itself. `cv.threshold` measured
+   *   0.42 ms per image, about 0.1% of engine time. It is the crops: a cut
+   *   removes a box's height far faster than its width, so on the SROIE sample
+   *   mean box height fell from 37.1 px to 30.3 px while the width held, and
+   *   the mean aspect ratio rose from 4.76 to 5.82. Recognition rescales every
+   *   crop to a fixed height, so a wider crop is a wider tensor and more work
+   *   per box, which is why the total rises even though fewer boxes survive.
+   *
+   * Leave it at `0` unless a corpus measures better above it, then tune the
+   * value on that corpus. Applies to both the OpenCV and the canvas-native
+   * detection path; both cut at the same 8-bit level, so one probability
+   * selects the same foreground on either engine.
    *
    * @default 0
    */

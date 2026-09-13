@@ -115,10 +115,37 @@ describe("detectionThreshold", () => {
   });
 
   test("does not leak into service defaults", async () => {
+    const before = await service.detect(imageBuffer);
+
     await service.detect(imageBuffer, { detectionThreshold: 0.999 });
 
-    const defaults = await service.detect(imageBuffer);
-    expect(defaults.boxes.length).toBeGreaterThan(0);
+    const after = await service.detect(imageBuffer);
+    // Comparing against a run taken *before* the thresholded call is what makes
+    // this a leak test. Asserting only `length > 0` afterwards did not: 0.999
+    // still yields boxes, so an implementation that wrote the per-call option
+    // onto the service would have passed too.
+    expect(after.boxes).toEqual(before.boxes);
+  });
+
+  test("rejects a threshold outside [0, 1)", async () => {
+    // Out of range is not a tuning mistake the engines can absorb. At 1 and
+    // above neither finds foreground, so detect() returns zero boxes with no
+    // error; below 0 the OpenCV path's `> 0` guard ignores the option, while
+    // the canvas-native cut goes negative so every pixel passes and the whole
+    // map collapses into a single region.
+    for (const value of [1, 1.5, -0.1, Number.NaN]) {
+      await expect(service.detect(imageBuffer, { detectionThreshold: value })).rejects.toThrow(
+        "detectionThreshold must be a probability in [0, 1)"
+      );
+    }
+  });
+
+  test("accepts both ends of the representable range", async () => {
+    const permissive = await service.detect(imageBuffer, { detectionThreshold: 0 });
+    const strict = await service.detect(imageBuffer, { detectionThreshold: 0.99 });
+
+    expect(permissive.boxes.length).toBeGreaterThan(0);
+    expect(strict.boxes.length).toBeGreaterThan(0);
   });
 
   test("applies on the canvas-native engine too", async () => {
